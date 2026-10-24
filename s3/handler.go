@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,12 @@ func NewHandler(store *storage.Storage, accounts []auth.Account) *Handler {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		h.handlePreflight(w, r)
+		return
+	}
+	setCORSHeaders(w.Header(), r)
+
 	// Authenticate
 	account := auth.VerifyRequest(h.accounts, r)
 	if account == nil && r.URL.Query().Has("X-Amz-Algorithm") {
@@ -90,6 +97,61 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeErrorResponse(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "Method not allowed")
 	}
+}
+
+var corsAllowedMethods = map[string]bool{
+	http.MethodGet:     true,
+	http.MethodHead:    true,
+	http.MethodPut:     true,
+	http.MethodDelete:  true,
+	http.MethodOptions: true,
+}
+
+func validOrigin(origin string) bool {
+	parsed, err := url.Parse(origin)
+	return err == nil && parsed.Scheme != "" && parsed.Host != "" && parsed.User == nil && parsed.Path == "" && parsed.RawQuery == "" && parsed.Fragment == ""
+}
+
+func setCORSHeaders(header http.Header, r *http.Request) {
+	origin := r.Header.Get("Origin")
+	if origin == "" || !validOrigin(origin) {
+		return
+	}
+	header.Set("Access-Control-Allow-Origin", origin)
+	addVary(header, "Origin")
+}
+
+func addVary(header http.Header, value string) {
+	for _, existing := range header.Values("Vary") {
+		for _, token := range strings.Split(existing, ",") {
+			if strings.EqualFold(strings.TrimSpace(token), value) {
+				return
+			}
+		}
+	}
+	header.Add("Vary", value)
+}
+
+func (h *Handler) handlePreflight(w http.ResponseWriter, r *http.Request) {
+	addVary(w.Header(), "Origin")
+	addVary(w.Header(), "Access-Control-Request-Method")
+	addVary(w.Header(), "Access-Control-Request-Headers")
+	origin := r.Header.Get("Origin")
+	method := strings.ToUpper(strings.TrimSpace(r.Header.Get("Access-Control-Request-Method")))
+	path := strings.TrimPrefix(r.URL.Path, "/")
+	bucket := strings.SplitN(path, "/", 2)[0]
+	if origin == "" || !validOrigin(origin) || bucket == "" || strings.ContainsAny(bucket, "\\\\?#%") || !corsAllowedMethods[method] {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	setCORSHeaders(w.Header(), r)
+	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, PUT, DELETE, OPTIONS")
+	if requestedHeaders := strings.TrimSpace(r.Header.Get("Access-Control-Request-Headers")); requestedHeaders != "" {
+		w.Header().Set("Access-Control-Allow-Headers", requestedHeaders)
+	}
+	w.Header().Set("Access-Control-Max-Age", "600")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) handleListBuckets(w http.ResponseWriter, _ *http.Request, account *auth.Account) {
