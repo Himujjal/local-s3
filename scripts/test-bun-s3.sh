@@ -44,7 +44,7 @@ S3_DATA_DIR="$TMP_DIR/data" \
 S3_BUCKETS="$BUCKET" \
 S3_ACCOUNT_BUN="$ACCESS_KEY:$SECRET_KEY" \
 S3_ACCOUNT_BUN_BUCKETS="$BUCKET" \
-  "$TMP_DIR/local-s3" >"$TMP_DIR/server.log" 2>&1 &
+  "$BINARY" >"$TMP_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 
 ready=0
